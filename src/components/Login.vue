@@ -1,0 +1,825 @@
+<template>
+	<v-card class="login-card" color="rgba(18, 24, 20, 0.98)" dark :style="themeStyles">
+		<v-btn icon small class="login-close" aria-label="Close" @click="$emit('close')">
+			<v-icon>mdi-close</v-icon>
+		</v-btn>
+
+		<template v-if="authenticated">
+			<div class="account-view">
+				<div class="account-header">
+					<div class="account-identity">
+						<div class="login-eyebrow">Signed in as</div>
+						<div class="account-email">{{ email }}</div>
+					</div>
+					<fieldset class="theme-picker-group">
+						<legend>Theme</legend>
+						<div class="theme-color-picker">
+							<span>Primary</span>
+							<v-menu v-model="themePickerMenus.primary" :close-on-content-click="false" offset-y>
+								<template v-slot:activator="{ on, attrs }">
+									<button
+										v-bind="attrs"
+										type="button"
+										class="theme-color-swatch"
+										:style="{ backgroundColor: theme.primary }"
+										:aria-label="`Choose primary theme color, currently ${theme.primary}`"
+										v-on="on"
+									></button>
+								</template>
+								<v-color-picker
+									ref="primaryColorPicker"
+									style="background-color: #1E1E1E;"
+									v-model="themeDraft.primary"
+									hide-inputs
+									hide-mode-switch
+								/>
+							</v-menu>
+						</div>
+						<div class="theme-color-picker">
+							<span>Secondary</span>
+							<v-menu v-model="themePickerMenus.secondary" :close-on-content-click="false" offset-y>
+								<template v-slot:activator="{ on, attrs }">
+									<button
+										v-bind="attrs"
+										type="button"
+										class="theme-color-swatch"
+										:style="{ backgroundColor: theme.secondary }"
+										:aria-label="`Choose secondary theme color, currently ${theme.secondary}`"
+										v-on="on"
+									></button>
+								</template>
+								<v-color-picker
+									v-model="themeDraft.secondary"
+									style="background-color: #1E1E1E;"
+									hide-inputs
+									hide-mode-switch
+								/>
+							</v-menu>
+						</div>
+						<v-btn
+							icon
+							small
+							class="theme-reset-button"
+							aria-label="Reset theme colors to defaults"
+							title="Reset theme colors to defaults"
+							@click="resetTheme"
+						>
+							<v-icon small>mdi-refresh</v-icon>
+						</v-btn>
+					</fieldset>
+				</div>
+				<v-tabs v-model="activeTab" background-color="transparent" :color="theme.primary" grow>
+					<v-tab>Guess counts</v-tab>
+					<v-tab>Badges</v-tab>
+				</v-tabs>
+				<v-tabs-items v-model="activeTab" class="account-tab-content" touchless>
+					<v-tab-item>
+						<div class="stats-heading">Solved puzzles by guess count</div>
+						<div class="stats-chart" aria-label="Solved puzzles by guess count">
+							<div v-for="bucket in statBuckets" :key="bucket.key" class="stats-row">
+								<div class="stats-label">{{ bucket.label }}</div>
+								<div class="stats-track">
+									<div
+										class="stats-bar"
+										:style="{ width: `${barWidth(bucket.value)}%` }"
+										:aria-label="`${bucket.value} solved in ${bucket.label} guesses`"
+									>{{ bucket.value }}</div>
+								</div>
+							</div>
+						</div>
+					</v-tab-item>
+					<v-tab-item eager>
+						<div class="stats-heading">Badges collected</div>
+						<div v-if="collectedBadges.length" class="badge-pagination">
+							<v-btn icon small aria-label="Previous badge page" :color="theme.primary" :disabled="badgePageIndex === 0" @click="changeBadgePage(-1)">
+								<v-icon>mdi-chevron-left</v-icon>
+							</v-btn>
+							<span class="badge-page-label">{{ badgePageLabel }}</span>
+							<v-btn icon small aria-label="Next badge page" :color="theme.primary" :disabled="badgePageIndex >= badgePageCount - 1" @click="changeBadgePage(1)">
+								<v-icon>mdi-chevron-right</v-icon>
+							</v-btn>
+						</div>
+						<div v-if="collectedBadges.length" class="badge-page" ref="badgePage" v-touch="{ left: () => changeBadgePage(1), right: () => changeBadgePage(-1) }">
+							<div
+								class="badge-grid"
+								:style="{ gridTemplateColumns: `repeat(${badgeColumns}, minmax(0, 1fr))` }"
+							>
+								<div v-for="badge in pagedBadges" :key="badge.name" class="badge-cell">
+									<v-tooltip bottom open-on-hover open-on-click>
+										<template v-slot:activator="{ on, attrs }">
+											<div
+												v-bind="attrs"
+												v-on="on"
+												class="badge-tooltip-target"
+											>
+												<img
+													:src="`${baseUrl}/badges/${badge.name}.png`"
+													:alt="badge.description.title"
+													width="64"
+													height="64"
+												>
+												<span class="badge-title">{{ badge.description.title }}</span>
+											</div>
+										</template>
+										<div class="badge-tooltip-description">{{ badge.description.description }}</div>
+									</v-tooltip>
+									<span class="badge-count" :aria-label="`Collected ${badge.count} times`">
+										{{ badge.count }}
+									</span>
+								</div>
+							</div>
+						</div>
+						<div v-else class="badge-empty">No badges collected yet.</div>
+					</v-tab-item>
+				</v-tabs-items>
+				<v-btn block outlined :color="theme.primary" style="max-height: 36px;" @click="logout">
+					<v-icon left>mdi-logout</v-icon>
+					Log out
+				</v-btn>
+			</div>
+		</template>
+		<template v-else>
+		<div class="login-header">
+			<div>
+				<div class="login-eyebrow">Welcome to the</div>
+				<div class="text-h4 font-weight-bold theme-primary-text">Nerdle</div>
+			</div>
+			<v-icon :color="theme.primary" large>mdi-lock-outline</v-icon>
+		</div>
+
+		<v-card-text class="pt-2">
+			<div class="text-h6 mb-1">{{ isRegistering ? 'Create your account' : 'Log in to save your progress' }}</div>
+
+			<v-form ref="form" @submit.prevent="submit">
+				<v-text-field
+					v-model.trim="formEmail"
+					label="Email"
+					type="email"
+					autocomplete="email"
+					outlined
+					dense
+					:color="theme.primary"
+					:error-messages="emailError"
+					@input="clearError"
+				/>
+				<v-text-field
+					v-model="password"
+					label="Password"
+					:type="showPassword ? 'text' : 'password'"
+					:append-icon="showPassword ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+					:autocomplete="isRegistering ? 'new-password' : 'current-password'"
+					outlined
+					dense
+					:color="theme.primary"
+					:error-messages="passwordError"
+					@click:append="showPassword = !showPassword"
+					@input="clearError"
+				/>
+				<v-text-field
+					v-if="isRegistering"
+					v-model="confirmation"
+					label="Confirm password"
+					type="password"
+					autocomplete="new-password"
+					outlined
+					dense
+					:color="theme.primary"
+					:error-messages="confirmationError"
+					@input="clearError"
+				/>
+
+				<v-alert v-if="serverError" dense text type="error" class="mt-2 mb-4">
+					{{ serverError }}
+				</v-alert>
+				<v-alert v-if="successMessage" dense text type="success" class="mt-2 mb-4">
+					{{ successMessage }}
+				</v-alert>
+
+				<v-btn block :color="theme.primary" dark large type="submit" :loading="loading">
+					{{ isRegistering ? 'Create account' : 'Log in' }}
+				</v-btn>
+			</v-form>
+		</v-card-text>
+
+		<v-card-actions class="justify-center pb-5">
+			<span class="login-switch-copy">{{ isRegistering ? 'Already have an account?' : 'New to Nerdle?' }}</span>
+			<v-btn text small :color="theme.primary" @click="toggleMode">
+				{{ isRegistering ? 'Log in' : 'Register' }}
+			</v-btn>
+		</v-card-actions>
+		</template>
+	</v-card>
+</template>
+
+<script>
+import { loginUser, registerUser } from '@/data'
+
+export default {
+	name: 'NerdleLogin',
+
+	props: {
+		email: {
+			type: String,
+			default: ''
+		},
+		authenticated: {
+			type: Boolean,
+			default: false
+		},
+		counts: {
+			type: Object,
+			default: () => ({})
+		},
+		badgeCounts: {
+			type: Object,
+			default: () => ({})
+		},
+		badgeDescriptions: {
+			type: Object,
+			default: () => ({})
+		},
+		completedPuzzles: {
+			type: Array,
+			default: () => []
+		},
+		theme: {
+			type: Object,
+			default: () => ({ primary: '#4CAF50', secondary: '#1A1D1B' })
+		}
+	},
+
+	data() {
+		return {
+			activeTab: 0,
+			badgePageIndex: 0,
+			badgeColumns: 1,
+			badgePageSize: 1,
+			badgeResizeObserver: null,
+			themeDraft: {
+				primary: '#4CAF50',
+				secondary: '#1A1D1B'
+			},
+			themePickerMenus: {
+				primary: false,
+				secondary: false
+			},
+			isRegistering: false,
+			formEmail: '',
+			password: '',
+			confirmation: '',
+			showPassword: false,
+			loading: false,
+			emailError: '',
+			passwordError: '',
+			confirmationError: '',
+			serverError: '',
+			successMessage: ''
+		}
+	},
+
+	methods: {
+		queueThemeUpdate(color) {
+			this.$emit('theme-change', { color, value: this.themeDraft[color] })
+		},
+
+		resetTheme() {
+			this.themeDraft.primary = '#4CAF50'
+			this.themeDraft.secondary = '#1A1D1B'
+			this.$emit('theme-change', { color: 'primary', value: this.themeDraft.primary })
+			this.$emit('theme-change', { color: 'secondary', value: this.themeDraft.secondary })
+		},
+
+		observeBadgePage() {
+			const page = this.$refs.badgePage
+			if (!page) return
+			this.updateBadgePageSize()
+			if (this.badgeResizeObserver) this.badgeResizeObserver.observe(page)
+		},
+
+		updateBadgePageSize() {
+			const page = this.$refs.badgePage
+			if (!page) return
+
+			const columnWidth = 112
+			const columnGap = 8
+			const rowHeight = 118
+			const rowGap = 8
+			const columns = Math.max(1, Math.floor((page.clientWidth + columnGap) / (columnWidth + columnGap)))
+			const rows = Math.max(1, Math.floor((page.clientHeight + rowGap) / (rowHeight + rowGap)))
+			const pageSize = columns * rows
+			if (pageSize !== this.badgePageSize) this.badgePageIndex = 0
+			this.badgeColumns = columns
+			this.badgePageSize = pageSize
+		},
+
+		changeBadgePage(amount) {
+			this.badgePageIndex = Math.min(
+				Math.max(this.badgePageIndex + amount, 0),
+				this.badgePageCount - 1
+			)
+		},
+
+		barWidth(value) {
+			const maximum = Math.max(...this.statBuckets.map(bucket => bucket.value), 1)
+			return value === 0 ? 0 : Math.max(8, (value / maximum) * 70)
+		},
+
+		logout() {
+			this.$emit('logout')
+            this.clearError()
+		},
+
+		clearError() {
+			this.emailError = ''
+			this.passwordError = ''
+			this.confirmationError = ''
+			this.serverError = ''
+			this.successMessage = ''
+		},
+
+		toggleMode() {
+			this.isRegistering = !this.isRegistering
+			this.clearError()
+			this.confirmation = ''
+		},
+
+		validate() {
+			let valid = true
+			const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+			this.emailError = emailPattern.test(this.formEmail) ? '' : 'Enter a valid email address.'
+			this.passwordError = this.password.length >= 8 ? '' : 'Password must be at least 8 characters.'
+			this.confirmationError = this.isRegistering && this.password !== this.confirmation
+				? 'Passwords must match.'
+				: ''
+			valid = !this.emailError && !this.passwordError && !this.confirmationError
+			return valid
+		},
+
+		async submit() {
+			this.clearError()
+			if (!this.validate()) return
+
+			this.loading = true
+			const result = this.isRegistering
+				? await registerUser(this.formEmail, this.password)
+				: await loginUser(this.formEmail, this.password)
+			this.loading = false
+
+			if (!result.ok) {
+				this.serverError = result.error
+				return
+			}
+
+			if (this.isRegistering && !(result.data && result.data.token)) {
+				this.successMessage = 'Account created. You can log in now.'
+				this.isRegistering = false
+			} else {
+				this.successMessage = 'You are logged in.'
+				this.$emit('authenticated', {
+					email: this.formEmail,
+					token: result.data && result.data.token
+				})
+			}
+		}
+	},
+
+	mounted() {
+		window.addEventListener('resize', this.updateBadgePageSize)
+		if (typeof ResizeObserver !== 'undefined') {
+			this.badgeResizeObserver = new ResizeObserver(this.updateBadgePageSize)
+		}
+		this.$nextTick(() => this.observeBadgePage())
+		this.themeDraft = { ...this.theme }
+	},
+
+	beforeDestroy() {
+		window.removeEventListener('resize', this.updateBadgePageSize)
+		if (this.badgeResizeObserver) this.badgeResizeObserver.disconnect()
+	},
+
+	computed: {
+		themeStyles() {
+			const hex = this.theme.primary.slice(1)
+			const rgb = [0, 2, 4].map(index => parseInt(hex.slice(index, index + 2), 16)).join(', ')
+			return {
+				'--theme-primary': this.theme.primary,
+				'--theme-primary-rgb': rgb
+			}
+		},
+		baseUrl() {
+			return process.env.NODE_ENV === 'production' ? '/Nerdle' : 'http://localhost:8080'
+		},
+
+		collectedBadges() {
+			return Object.entries(this.badgeCounts)
+				.map(([name, count]) => ({
+					name,
+					count: Number(count),
+					description: this.badgeDescriptions[name]
+				}))
+				.filter(badge => Number.isFinite(badge.count) && badge.count > 0 && badge.description)
+				.sort((a, b) => b.count - a.count || a.description.title.localeCompare(b.description.title))
+		},
+
+		pagedBadges() {
+			const start = this.badgePageIndex * this.badgePageSize
+			return this.collectedBadges.slice(start, start + this.badgePageSize)
+		},
+
+		badgePageCount() {
+			return Math.max(1, Math.ceil(this.collectedBadges.length / this.badgePageSize))
+		},
+
+		badgePageLabel() {
+			const firstBadge = this.badgePageIndex * this.badgePageSize + 1
+			const lastBadge = Math.min(firstBadge + this.badgePageSize - 1, this.collectedBadges.length)
+			return `${firstBadge}-${lastBadge} of ${this.collectedBadges.length}`
+		},
+
+		statBuckets() {
+			return [1, 2, 3, 4, 5].map(key => ({
+				key,
+				label: `${key}`,
+				value: Number(this.counts[key] || 0)
+			})).concat({
+				key: 6,
+				label: '6+',
+				value: Number(this.counts[6] || 0)
+			})
+		}
+	},
+
+	watch: {
+		activeTab(tab) {
+			if (tab === 1) this.$nextTick(this.observeBadgePage)
+		},
+
+		badgeCounts() {
+			this.badgePageIndex = 0
+			this.$nextTick(() => this.observeBadgePage())
+		},
+
+		badgePageCount(count) {
+			if (this.badgePageIndex >= count) this.badgePageIndex = count - 1
+		},
+		"themePickerMenus.primary"(newVal, oldVal) {
+			if (oldVal && !newVal) {
+				this.queueThemeUpdate("primary")
+			}
+		},
+		"themePickerMenus.secondary"(newVal, oldVal) {
+			if (oldVal && !newVal) {
+				this.queueThemeUpdate("secondary")
+			}
+		}
+	},
+}
+</script>
+
+<style scoped>
+.login-card {
+	position: relative;
+	width: min(100%, 440px);
+	border: 1px solid rgba(var(--theme-primary-rgb), 0.28);
+	border-radius: 18px;
+	box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45);
+}
+
+.login-close {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+}
+
+.account-view {
+	padding: 32px 24px 24px;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	height: auto;
+	max-height: min(560px, calc(100vh - 32px));
+	overflow: hidden;
+}
+
+.account-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 8px;
+}
+
+.account-identity {
+	min-width: 0;
+}
+
+.theme-picker-group {
+	display: flex;
+	flex: 0 0 auto;
+	gap: 10px;
+	margin: 0;
+	padding: 4px 8px 8px;
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	border-radius: 8px;
+}
+
+.theme-picker-group legend {
+	padding: 0 4px;
+	color: rgba(255, 255, 255, 0.72);
+	font-size: 0.7rem;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.theme-color-picker {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	color: rgba(255, 255, 255, 0.82);
+	font-size: 0.75rem;
+}
+
+.theme-color-swatch {
+	width: 28px;
+	height: 26px;
+	border: 1px solid rgba(255, 255, 255, 0.5);
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.theme-color-swatch:focus-visible,
+.theme-reset-button:focus-visible {
+	outline: 2px solid white;
+	outline-offset: 2px;
+}
+
+.theme-reset-button {
+	align-self: center;
+}
+
+.theme-primary-text {
+	color: var(--theme-primary) !important;
+}
+
+.account-view >>> .v-tabs,
+.account-view >>> .v-tabs-items {
+	background-color: transparent !important;
+}
+
+.account-view >>> .v-tabs {
+	flex: 0 0 auto;
+}
+
+.account-email {
+	margin: 8px 0 12px;
+	color: rgba(255, 255, 255, 0.9);
+	font-size: 1.05rem;
+	word-break: break-word;
+}
+
+.account-tab-content {
+	display: flex;
+	flex: 0 1 auto;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.account-tab-content >>> .v-window__container {
+	display: flex;
+	flex: 0 1 auto;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.account-tab-content >>> .v-window-item {
+	display: flex;
+	flex: 0 1 auto;
+	flex-direction: column;
+	height: auto;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.account-tab-content >>> .v-window-item > * {
+	flex-shrink: 0;
+}
+
+.account-tab-content >>> .v-window-item > .badge-page {
+	flex-shrink: 1;
+}
+
+.account-tab-content >>> .v-window-item > .badge-pagination {
+	flex-shrink: 0;
+}
+
+.account-tab-content >>> .v-window-item > .badge-page {
+	flex: 0 1 auto;
+}
+
+.account-tab-content >>> .v-window-item > .stats-heading {
+	padding-top: 16px;
+}
+
+.stats-heading {
+	margin-bottom: 10px;
+	color: rgba(255, 255, 255, 0.72);
+	font-size: 0.8rem;
+	font-weight: 700;
+	text-transform: uppercase;
+}
+
+.stats-chart {
+	margin-bottom: 24px;
+}
+
+.badge-page {
+	flex: 0 1 auto;
+	height: min(42vh, 340px);
+	min-height: 118px;
+	max-height: calc(100vh - 300px);
+	overflow: hidden;
+}
+
+.badge-grid {
+	display: grid;
+	grid-auto-rows: 118px;
+	gap: 8px;
+}
+
+.badge-cell {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 0;
+	height: 118px;
+	padding: 4px;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 10px;
+	background: rgba(255, 255, 255, 0.04);
+	text-align: center;
+}
+
+.badge-tooltip-target {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	height: 100%;
+	cursor: help;
+}
+
+.badge-tooltip-target img {
+	flex: 0 0 auto;
+	object-fit: contain;
+}
+
+.badge-title {
+	display: -webkit-box;
+	overflow: hidden;
+	max-width: 100%;
+	margin-top: 4px;
+	color: rgba(255, 255, 255, 0.92);
+	font-size: 0.72rem;
+	line-height: 1.15;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	line-clamp: 2;
+}
+
+.badge-count {
+	position: absolute;
+	top: 4px;
+	right: 4px;
+	min-width: 21px;
+	padding: 2px 5px;
+	border-radius: 10px;
+	background: var(--theme-primary);
+	color: white;
+	font-size: 0.7rem;
+	font-weight: 700;
+	line-height: 1.2;
+}
+
+.badge-tooltip-description {
+	max-width: 240px;
+	text-align: center;
+}
+
+.badge-pagination {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	margin: 4px 0 12px;
+}
+
+.badge-page-label,
+.badge-empty {
+	color: rgba(255, 255, 255, 0.72);
+	font-size: 0.8rem;
+}
+
+.badge-empty {
+	padding: 24px 0;
+	text-align: center;
+}
+
+.stats-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 6px 0;
+}
+
+.stats-label {
+	width: 24px;
+	color: rgba(255, 255, 255, 0.72);
+	font-size: 0.8rem;
+	text-align: left;
+}
+
+.stats-track {
+	flex: 1;
+	height: 22px;
+	background: rgba(255, 255, 255, 0.08);
+}
+
+.stats-bar {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	box-sizing: border-box;
+	min-width: 0;
+	height: 100%;
+	padding: 0 5px 0 10px;
+	background: var(--theme-primary);
+	color: white;
+	font-size: 0.75rem;
+	font-weight: 700;
+}
+
+.login-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 24px 24px 0;
+}
+
+.login-eyebrow {
+	color: var(--theme-primary);
+	font-size: 0.75rem;
+	font-weight: 700;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+}
+
+.login-copy,
+.login-switch-copy {
+	color: rgba(255, 255, 255, 0.68);
+}
+
+.login-copy {
+	line-height: 1.5;
+}
+
+@media (max-width: 500px) {
+	.login-card {
+		width: 100%;
+		min-height: 100vh;
+		border-radius: 0;
+	}
+
+	.login-header {
+		padding: 20px 20px 0;
+	}
+
+	.account-view {
+		min-height: 100vh;
+		max-height: 100vh;
+	}
+
+	.account-header {
+		flex-wrap: wrap;
+	}
+
+	.account-tab-content {
+		flex: 1 1 auto;
+	}
+
+	.account-tab-content >>> .v-window__container,
+	.account-tab-content >>> .v-window-item {
+		flex: 1 1 auto;
+	}
+
+	.badge-page {
+		flex: 1 1 auto;
+		max-height: none;
+	}
+
+}
+</style>

@@ -1,5 +1,67 @@
 <template>
   <v-app>
+    <v-navigation-drawer
+      id="puzzle-controls-drawer"
+      v-model="puzzleDrawerOpen"
+      temporary
+      fixed
+      left
+      width="280"
+      class="puzzle-controls-drawer"
+      aria-label="Puzzle controls"
+    >
+      <div class="puzzle-drawer-content">
+        <div class="puzzle-drawer-header" role="status" aria-live="polite">
+          <template>{{ mode === 'daily' ? 'Daily · ' + dailySeed : 'Random puzzle' }}</template>
+          <v-chip color="orange" small style="margin-left: 10px">Beta</v-chip>
+        </div>
+        <p v-if="isGenerating" class="puzzle-drawer-status">{{ generationStatus }}</p>
+        <div class="puzzle-mode-switch puzzle-drawer-mode-switch" role="group" aria-label="Choose puzzle mode">
+          <button
+            type="button"
+            :disabled="isGenerating"
+            :class="{ 'puzzle-mode-button--active': mode === 'daily' }"
+            :aria-pressed="mode === 'daily'"
+            @click="selectDaily(); puzzleDrawerOpen = false"
+          >Daily</button>
+          <button
+            type="button"
+            :disabled="isGenerating"
+            :class="{ 'puzzle-mode-button--active': mode === 'random' }"
+            :aria-pressed="mode === 'random'"
+            @click="loadRandomPuzzle(); puzzleDrawerOpen = false"
+          >Random</button>
+        </div>
+        <div class="difficulty-switch puzzle-drawer-difficulty-switch" role="group" aria-label="Choose puzzle difficulty">
+          <button
+            v-for="level in difficultyOptions"
+            :key="'drawer-difficulty-' + level"
+            type="button"
+            :disabled="isGenerating"
+            :class="{ 'difficulty-button--active': difficulty === level }"
+            :aria-pressed="difficulty === level"
+            @click="selectDifficulty(level); puzzleDrawerOpen = false"
+          >{{ level }}</button>
+        </div>
+        <button
+          v-if="mode === 'random'"
+          type="button"
+          class="new-puzzle-button puzzle-drawer-new-puzzle"
+          :disabled="isGenerating"
+          @click="loadRandomPuzzle(); puzzleDrawerOpen = false"
+        >New random puzzle</button>
+      </div>
+    </v-navigation-drawer>
+    <v-btn
+      icon
+      class="puzzle-menu-button"
+      aria-label="Open puzzle controls"
+      aria-controls="puzzle-controls-drawer"
+      :aria-expanded="puzzleDrawerOpen"
+      @click="puzzleDrawerOpen = true"
+    >
+      <v-icon>mdi-menu</v-icon>
+    </v-btn>
     <main class="game-shell">
       <div class="puzzle-toolbar" aria-label="Puzzle modes">
         <div class="puzzle-mode-switch" role="group" aria-label="Choose puzzle mode">
@@ -49,6 +111,55 @@
         :class="{ 'game-layout--generating': isGenerating }"
         :aria-busy="isGenerating"
       >
+        <section class="goal-section" aria-label="Color reference">
+          <div class="section-label">
+            <span class="section-kicker">THE REFERENCE</span>
+          </div>
+          <div class="goal-frame">
+            <div class="goal-display">
+              <div
+                class="goal-grid"
+                :style="goalGridStyle"
+                role="img"
+                :aria-label="'Goal color pattern, ' + boardRows + ' by ' + boardColumns"
+              >
+                <span
+                  v-for="(color, index) in goalCells"
+                  :key="'goal-' + index"
+                  class="goal-cell"
+                  :class="{
+                    'goal-cell--hidden': isHiddenCell(index),
+                    'grid-cell--hovered': hoveredCellIndex === index,
+                  }"
+                  :style="goalCellStyle(color)"
+                  @mouseenter="setHoveredCell(index)"
+                  @mouseleave="clearHoveredCell"
+                >{{ isHiddenCell(index) ? '?' : '' }}</span>
+              </div>
+              <span class="goal-display-label">Goal</span>
+            </div>
+            <div class="goal-display">
+              <div class="goal-progress-grid" :style="goalGridStyle" role="group" aria-label="Puzzle progress by cell">
+                <span
+                  v-for="(cell, index) in progressCells"
+                  :key="'progress-' + index"
+                  class="goal-progress-cell"
+                  :class="[
+                    'goal-progress-cell--' + cell.status,
+                    { 'goal-progress-cell--hidden': cell.hidden },
+                    { 'grid-cell--hovered': hoveredCellIndex === index },
+                  ]"
+                  role="img"
+                  :aria-label="'Row ' + (cell.row + 1) + ', column ' + (cell.col + 1) + ': ' + (cell.hidden ? 'hidden' : cell.status)"
+                  @mouseenter="setHoveredCell(index)"
+                  @mouseleave="clearHoveredCell"
+                >{{ cell.hidden ? '?' : cell.status === 'correct' ? '✓' : cell.status === 'incorrect' ? '×' : '' }}</span>
+              </div>
+              <span class="goal-display-label">Progress</span>
+            </div>
+          </div>
+        </section>
+
         <section class="board-section" aria-labelledby="board-heading">
           <div class="section-label board-label">
             <div>
@@ -67,7 +178,7 @@
               :aria-pressed="activeColorFilter === color.key"
               @click="toggleColorFilter(color.key)"
             >{{ color.label }}</button>
-            <v-spacer/>
+            <v-spacer class="color-filter-spacer"/>
             <div class="board-actions">
               <v-btn
                 text
@@ -202,106 +313,55 @@
           </div>
         </section>
 
-        <aside class="side-panel" aria-label="Goal and panes">
-          <section class="goal-section" aria-label="Color reference">
-            <div class="section-label">
-              <span class="section-kicker">THE REFERENCE</span>
+        <section class="pieces-section" aria-labelledby="pieces-heading">
+          <div class="section-label pieces-label">
+            <div>
+              <span class="section-kicker">THE PANES</span>
+              <span id="pieces-heading" class="section-caption">Pick up a piece</span>
             </div>
-            <div class="goal-frame">
-              <div class="goal-display">
-                <div
-                  class="goal-grid"
-                  :style="goalGridStyle"
-                  role="img"
-                  :aria-label="'Goal color pattern, ' + boardRows + ' by ' + boardColumns"
-                >
-                  <span
-                    v-for="(color, index) in goalCells"
-                    :key="'goal-' + index"
-                    class="goal-cell"
-                    :class="{
-                      'goal-cell--hidden': isHiddenCell(index),
-                      'grid-cell--hovered': hoveredCellIndex === index,
-                    }"
-                    :style="goalCellStyle(color)"
-                    @mouseenter="setHoveredCell(index)"
-                    @mouseleave="clearHoveredCell"
-                  >{{ isHiddenCell(index) ? '?' : '' }}</span>
-                </div>
-                <span class="goal-display-label">Goal</span>
-              </div>
-              <div class="goal-display">
-                <div class="goal-progress-grid" :style="goalGridStyle" role="group" aria-label="Puzzle progress by cell">
-                  <span
-                    v-for="(cell, index) in progressCells"
-                    :key="'progress-' + index"
-                    class="goal-progress-cell"
-                    :class="[
-                      'goal-progress-cell--' + cell.status,
-                      { 'goal-progress-cell--hidden': cell.hidden },
-                      { 'grid-cell--hovered': hoveredCellIndex === index },
-                    ]"
-                    role="img"
-                    :aria-label="'Row ' + (cell.row + 1) + ', column ' + (cell.col + 1) + ': ' + (cell.hidden ? 'hidden' : cell.status)"
-                    @mouseenter="setHoveredCell(index)"
-                    @mouseleave="clearHoveredCell"
-                  >{{ cell.hidden ? '?' : cell.status === 'correct' ? '✓' : cell.status === 'incorrect' ? '×' : '' }}</span>
-                </div>
-                <span class="goal-display-label">Progress</span>
-              </div>
-            </div>
-          </section>
+            <span class="pieces-count">{{ remainingCount }} remaining</span>
+          </div>
 
-          <section class="pieces-section" aria-labelledby="pieces-heading">
-            <div class="section-label pieces-label">
-              <div>
-                <span class="section-kicker">THE PANES</span>
-                <span id="pieces-heading" class="section-caption">Pick up a piece</span>
-              </div>
-              <span class="pieces-count">{{ remainingCount }} remaining</span>
-            </div>
-
+          <div
+            class="pieces-tray"
+            :class="{
+              'pieces-tray--return-target': drag && drag.fromBoard,
+              'pieces-tray--disabled': isSolved,
+            }"
+            :aria-disabled="isSolved"
+            role="region"
+            aria-label="Available panes"
+            tabindex="0"
+            @pointerdown="onTrayPointerDown"
+          >
             <div
-              class="pieces-tray"
+              v-for="piece in availablePieces"
+              :key="'tray-' + piece.id"
+              class="piece-card"
               :class="{
-                'pieces-tray--return-target': drag && drag.fromBoard,
-                'pieces-tray--disabled': isSolved,
+                'piece-card--dragging': isDragging(piece.id),
+                'piece-card--selected': selectedPieceId === piece.id,
               }"
-              :aria-disabled="isSolved"
-              role="region"
-              aria-label="Available panes"
-              tabindex="0"
-              @pointerdown="onTrayPointerDown"
+              :aria-label="piece.name"
+              @pointerdown="startBankPress($event, piece)"
             >
-              <div
-                v-for="piece in availablePieces"
-                :key="'tray-' + piece.id"
-                class="piece-card"
-                :class="{
-                  'piece-card--dragging': isDragging(piece.id),
-                  'piece-card--selected': selectedPieceId === piece.id,
-                }"
-                :aria-label="piece.name"
-                @pointerdown="startBankPress($event, piece)"
-              >
-                <div class="piece-card-body">
-                  <div class="piece-shape tray-shape" :style="trayShapeStyle(piece)">
-                    <span
-                      v-for="cell in piece.cells"
-                      :key="piece.id + '-tray-' + cell.row + '-' + cell.col"
-                      class="pane-cell pane-cell--tray"
-                      :style="trayCellStyle(piece, cell)"
-                    ></span>
-                  </div>
+              <div class="piece-card-body">
+                <div class="piece-shape tray-shape" :style="trayShapeStyle(piece)">
+                  <span
+                    v-for="cell in piece.cells"
+                    :key="piece.id + '-tray-' + cell.row + '-' + cell.col"
+                    class="pane-cell pane-cell--tray"
+                    :style="trayCellStyle(piece, cell)"
+                  ></span>
                 </div>
               </div>
-              <div v-if="remainingCount === 0" class="tray-complete">
-                Drag a pane off the board to return it to the bank.
-              </div>
             </div>
-            <p class="tray-tip"><span aria-hidden="true">↗</span> Click or drag a pane to place; click the bank or release off the board to return it.</p>
-          </section>
-        </aside>
+            <div v-if="remainingCount === 0" class="tray-complete">
+              Drag a pane off the board to return it to the bank.
+            </div>
+          </div>
+          <p class="tray-tip"><span aria-hidden="true">↗</span> Click or drag a pane to place; click the bank or release off the board to return it.</p>
+        </section>
       </div>
     </main>
     <v-dialog v-model="victoryDialog" max-width="420">
@@ -402,6 +462,7 @@ export default {
       dailySeed,
       dailyProgress: {},
       randomProgress: {},
+      puzzleDrawerOpen: false,
       generationError: '',
       saveError: '',
       generationStatus: '',
@@ -897,7 +958,7 @@ export default {
     },
     startBankPress(event, piece) {
       if (this.isSolved || event.button !== 0 || this.drag || this.pendingPress || this.clickDrop) return;
-      event.preventDefault();
+      if (event.pointerType !== 'touch') event.preventDefault();
       if (this.selectedPieceId && this.placed[this.selectedPieceId]) {
         this.clickDrop = { type: 'bank', pieceId: this.selectedPieceId };
         return;
@@ -1336,6 +1397,62 @@ button {
   gap: 10px;
 }
 
+.puzzle-controls-drawer {
+  background: var(--paper) !important;
+}
+
+.puzzle-drawer-content {
+  padding: 24px 18px;
+}
+
+.puzzle-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.puzzle-drawer-date {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.puzzle-drawer-status {
+  margin: -8px 0 14px;
+  color: #858980;
+  font-size: 11px;
+}
+
+.puzzle-drawer-mode-switch {
+  display: flex;
+  width: 100%;
+  margin-bottom: 18px;
+}
+
+.puzzle-drawer-mode-switch button {
+  flex: 1;
+}
+
+.puzzle-drawer-difficulty-switch {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  margin-bottom: 14px;
+}
+
+.puzzle-drawer-difficulty-switch button {
+  text-align: left;
+}
+
+.puzzle-drawer-new-puzzle {
+  width: 100%;
+}
+
+.puzzle-menu-button {
+  display: none !important;
+}
+
 .puzzle-mode-switch {
   display: inline-flex;
   gap: 2px;
@@ -1445,6 +1562,10 @@ button {
 .game-layout {
   display: grid;
   grid-template-columns: minmax(0, 620px) minmax(260px, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "board goal"
+    "board pieces";
   align-items: start;
   gap: clamp(20px, 3vw, 36px);
 }
@@ -1456,13 +1577,6 @@ button {
 
 .game-layout--generating * {
   pointer-events: none !important;
-}
-
-.side-panel {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 16px;
 }
 
 .section-label {
@@ -1584,7 +1698,18 @@ button {
   font-size: 9px;
 }
 
+.goal-section {
+  grid-area: goal;
+  min-width: 0;
+}
+
 .board-section {
+  grid-area: board;
+  min-width: 0;
+}
+
+.pieces-section {
+  grid-area: pieces;
   min-width: 0;
 }
 
@@ -1839,10 +1964,6 @@ button {
   color: #b7a577;
 }
 
-.pieces-section {
-  min-width: 0;
-}
-
 .pieces-label {
   margin-bottom: 11px;
 }
@@ -1961,11 +2082,6 @@ button {
     align-items: stretch;
   }
 
-  .side-panel {
-    height: 100%;
-    min-height: 0;
-  }
-
   .goal-section {
     display: flex;
     min-height: 0;
@@ -1999,18 +2115,32 @@ button {
 @media (max-width: 959px) {
   .game-layout {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .side-panel {
-    gap: 16px;
+    grid-template-rows: auto;
+    grid-template-areas:
+      "goal"
+      "board"
+      "pieces";
   }
 
   .puzzle-toolbar {
-    flex-wrap: wrap;
+    display: none;
   }
 
   .pieces-tray {
     max-height: 50vh;
+  }
+
+  .puzzle-menu-button {
+    position: fixed;
+    z-index: 4;
+    top: 8px;
+    left: 8px;
+    display: inline-flex !important;
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--line);
+    background: white;
+    box-shadow: 0 2px 8px rgba(41, 46, 42, .12);
   }
 }
 
@@ -2033,6 +2163,189 @@ button {
   .goal-frame {
     min-height: 104px;
   }
+}
 
+@media (max-width: 700px), (max-width: 959px) and (max-height: 500px) {
+  .game-shell {
+    --mobile-board-max: max(210px, calc(100vh - 390px));
+    --tray-cell: clamp(12px, 3.8vw, 15px);
+    padding-top: 12px;
+    padding-bottom: 0px;
+  }
+
+  @supports (height: 100dvh) {
+    .game-shell {
+      --mobile-board-max: max(210px, calc(100dvh - 390px));
+    }
+  }
+
+  .puzzle-toolbar {
+    align-items: flex-start;
+    column-gap: 8px;
+    row-gap: 6px;
+  }
+
+  .puzzle-mode-label {
+    flex: 1 1 100%;
+  }
+
+  .game-layout {
+    grid-template-areas:
+      "goal"
+      "board"
+      "pieces";
+    gap: 10px;
+  }
+
+  .section-label {
+    margin-bottom: 5px;
+  }
+
+  .goal-section .section-label {
+    display: none;
+  }
+
+  .goal-frame {
+    min-height: 0;
+    gap: 10px;
+    padding: 5px 8px;
+  }
+
+  .goal-grid,
+  .goal-progress-grid {
+    width: clamp(66px, 22vw, 90px);
+    max-width: 100%;
+    margin-top: 2px;
+    padding: 2px;
+    gap: 1px;
+  }
+
+  .goal-display-label {
+    font-size: 8px;
+  }
+
+  .board-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .board-label,
+  .board,
+  .board-footer {
+    width: min(100%, var(--mobile-board-max));
+    margin-right: auto;
+    margin-left: auto;
+  }
+
+  .color-filters {
+    flex-wrap: nowrap;
+    width: 100%;
+    gap: 5px;
+    margin: -2px 0 6px;
+  }
+
+  .color-filter-spacer {
+    display: none;
+  }
+
+  .color-filter-button {
+    min-width: 0;
+    padding: 5px 8px;
+  }
+
+  .board-actions {
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .pieces-label {
+    margin-bottom: 5px;
+  }
+
+  .pieces-tray {
+    display: flex;
+    flex-flow: row nowrap;
+    align-items: stretch;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px;
+    gap: 8px;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+  }
+
+  .piece-card {
+    flex: 0 0 auto;
+    width: max-content;
+    min-width: 76px;
+    min-height: 78px;
+    touch-action: pan-x;
+  }
+
+  .piece-card-body {
+    min-height: 58px;
+    padding: 4px;
+  }
+
+  .pane-cell--tray {
+    touch-action: pan-x;
+  }
+
+  .tray-complete {
+    flex: 0 0 100%;
+    width: 100%;
+  }
+
+  .tray-tip {
+    display: none;
+  }
+}
+
+@media (max-width: 959px) and (max-height: 500px) {
+  .game-shell {
+    --mobile-board-max: max(140px, calc(100vh - 250px));
+    --tray-cell: clamp(8px, 2.4vh, 10px);
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  @supports (height: 100dvh) {
+    .game-shell {
+      --mobile-board-max: max(140px, calc(100dvh - 250px));
+    }
+  }
+
+  .game-layout {
+    gap: 6px;
+  }
+
+  .goal-frame {
+    gap: 6px;
+    padding: 3px 6px;
+  }
+
+  .goal-grid,
+  .goal-progress-grid {
+    width: clamp(48px, 14vw, 64px);
+  }
+
+  .board-section > .section-label {
+    display: none;
+  }
+
+  .pieces-label {
+    margin-bottom: 3px;
+  }
+
+  .piece-card {
+    min-height: 62px;
+  }
+
+  .piece-card-body {
+    min-height: 48px;
+  }
 }
 </style>

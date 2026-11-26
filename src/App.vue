@@ -377,6 +377,15 @@
         <v-card-text class="victory-dialog-message">
           Congrats on completing the {{ difficultyLabel }} puzzle.
         </v-card-text>
+        <v-card-actions class="py-0">
+          <v-spacer/>
+          <v-btn
+            v-if="nextIncompleteDifficulty"
+            text
+            small
+            @click="goToNextIncompletePuzzle"
+          >{{ nextIncompleteDifficulty.charAt(0).toUpperCase() + nextIncompleteDifficulty.slice(1) }}<v-icon>mdi-arrow-right-bold</v-icon></v-btn>
+        </v-card-actions>
       </v-card>
     </v-dialog>
   </v-app>
@@ -577,6 +586,12 @@ export default {
     difficultyLabel() {
       return this.difficulty.charAt(0).toUpperCase() + this.difficulty.slice(1);
     },
+    nextIncompleteDifficulty() {
+      const currentIndex = this.difficultyOptions.indexOf(this.difficulty);
+      return this.difficultyOptions
+        .slice(currentIndex + 1)
+        .find((difficulty) => !this.isDifficultyComplete(difficulty)) || null;
+    },
     dragStyle() {
       if (!this.drag) return {};
       return {
@@ -685,6 +700,17 @@ export default {
       if (this.isGenerating || this.difficulty === difficulty || !this.puzzles[difficulty]) return;
       this.activatePuzzle(difficulty);
     },
+    isDifficultyComplete(difficulty) {
+      const progress = this.mode === 'daily'
+        ? this.dailyProgress[difficulty]
+        : this.randomProgress[difficulty];
+      return Boolean(progress && progress.completed);
+    },
+    goToNextIncompletePuzzle() {
+      if (this.nextIncompleteDifficulty) {
+        this.selectDifficulty(this.nextIncompleteDifficulty);
+      }
+    },
     loadDailyProgress() {
       let serialized;
       try {
@@ -756,6 +782,7 @@ export default {
         placed: { ...this.placed },
         placementOrder: { ...this.placementOrder },
         placementSequence: this.placementSequence,
+        completed: this.isSolved,
       };
       if (this.mode === 'random') {
         this.$set(this.randomProgress, this.difficulty, progress);
@@ -1546,7 +1573,6 @@ button {
 }
 
 .victory-dialog-message {
-  padding-bottom: 24px;
   color: #73796f;
   font-size: 14px;
   text-align: center;
